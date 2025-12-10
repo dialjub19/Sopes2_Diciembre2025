@@ -111,3 +111,10 @@ sudo update-grub
 sudo reboot
 ```
 
+### Seleccionar kernel compilado
+
+Aunque no se muestre el Kernel instalado no quiere decir que algo haya salido mal, ya que al iniciar el SO podemos ingresar a las opciones avanzadas presionando "shift+esc" el cual nos despliega el grub y ahi podemos seleccionar el la version de Kernel instalada, tambien se puede evitar hacer este proceso modificando archivos dentro de SO.
+
+![error kernel1](./img/errorKernel1.png)
+![error kernel2](./img/errorKernel2.png)
+
