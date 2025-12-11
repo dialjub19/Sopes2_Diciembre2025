@@ -55,6 +55,13 @@ scripts/config --set-str CONFIG_SYSTEM_REVOCATION_KEYS ""
 fakeroot make -j#nucleos
 ```
 
+## Verificación del proceso de compilación
+
+```bash
+// Si muestra un "0" quiere decir que no hubo errores y la compilación fue exitosa.
+echo $?
+```
+
 ### Instalar módulos
 
 ```bash
