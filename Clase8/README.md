@@ -1,193 +1,407 @@
-# Clase 7 — Documentación: Syscall de Uso de CPU
+# Clase 8 — Documentación: Syscall de Encriptación Multihilo
 
-En esta clase se implementó y probó una syscall que mide el uso de CPU del sistema.
+En esta clase se implementó una syscall avanzada que encripta archivos utilizando múltiples hilos en el kernel para paralelizar la operación.
 
 ## Resumen rápido
 
-- Objetivo: Añadir una syscall que calcula el uso de CPU durante un intervalo (100 ms) y devuelve el valor en centésimas de porcentaje (por ejemplo, 1234 = 12.34%).
-- Archivo kernel: linux-6.12.61/kernel/cpu_usage.c
-- Tabla de syscalls: linux-6.12.61/arch/x86/entry/syscalls/syscall_64.tbl (número `550`)
-- Programa de usuario de ejemplo: `main.c` (en la raíz del proyecto)
+- **Objetivo**: Crear una syscall que encripta archivos usando XOR con una clave, aprovechando múltiples hilos del kernel para paralelizar el proceso.
+- **Archivo kernel**: `linux-6.12.61/kernel/encrypt.c`
+- **Tabla de syscalls**: `linux-6.12.61/arch/x86/entry/syscalls/syscall_64.tbl` (número `552`)
+- **Programa de usuario**: `main.c` (en la raíz del proyecto)
+- **Números de hilos**: Configurable por el usuario
 
 ---
 
 ## Archivos relevantes
 
-- `linux-6.12.61/kernel/cpu_usage.c`: Implementa la lógica de la syscall `cpu_info`.
-- `linux-6.12.61/arch/x86/entry/syscalls/syscall_64.tbl`: Debe contener la entrada `550 common cpu_usage_syscall cpu_usage_syscall`.
-- `main.c`: Programa de usuario que invoca la syscall `550` y muestra el resultado.
+- `linux-6.12.61/kernel/encrypt.c`: Implementa la lógica de la syscall `my_encrypt`.
+- `linux-6.12.61/arch/x86/entry/syscalls/syscall_64.tbl`: Debe contener la entrada `552 common encryp_syscall encryp_syscall`.
+- `main.c`: Programa de usuario interactivo que invoca la syscall `552`.
 
 ### Detalles de la syscall
 
-- Nombre en código: `cpu_info` (definida con `SYSCALL_DEFINE1`)
-- Prototipo (implícito): `int cpu_info(int __user *cpu_usage_out)`
-- Comportamiento: bloqueante ~100 ms para muestreo; escribe en la dirección de usuario el valor entero (centésimas de %).
+- **Nombre en código**: `my_encrypt` (definida con `SYSCALL_DEFINE4`)
+- **Prototipo**: `int my_encrypt(const char __user *input_filepath, const char __user *output_filepath, const char __user *key_filepath, int thread_count)`
+- **Comportamiento**: Lee un archivo de entrada, lo encripta usando XOR con una clave, y lo guarda en un archivo de salida, utilizando múltiples hilos del kernel para paralelizar la operación.
 
-### Implementación del kernel (`cpu_usage.c`)
+---
 
-El archivo `linux-6.12.61/kernel/cpu_usage.c` contiene:
+## 🔐 Algoritmo de Encriptación: XOR
 
-1. **`read_cpu_times()`**: Lee los tiempos acumulados de todos los CPUs del sistema, sumando estados (usuario, sistema, idle, etc.).
-2. **`get_cpu_percent_x100()`**: Toma dos muestras de CPU con intervalo de 100 ms y calcula el porcentaje de uso multiplicado por 100 (centésimas).
-3. **`SYSCALL_DEFINE1(cpu_info, ...)`**: Define la syscall con un parámetro que apunta a un int en espacio de usuario.
+La encriptación utiliza el operador **XOR (^)** que funciona así:
 
-Características:
+| Operación | Resultado |
+| --------- | --------- |
+| `0 XOR 0` | 0         |
+| `0 XOR 1` | 1         |
+| `1 XOR 0` | 1         |
+| `1 XOR 1` | 0         |
 
-- Usa `for_each_online_cpu()` para iterar núcleos activos.
-- Accede a `kcpustat_cpu()` para estadísticas de cada núcleo.
-- Valida punteros con `put_user()` para escritura segura en espacio de usuario.
-- Devuelve `-EINVAL` si el puntero es NULL, `-EFAULT` si hay error al escribir.
+**Propiedad importante**: XOR es reversible. Si tienes:
 
-### Entrada en `syscall_64.tbl`
+- `dato_encriptado = dato_original XOR clave`
+- Entonces: `dato_original = dato_encriptado XOR clave`
 
-El archivo debe contener:
+---
+
+## 📋 Flujo General de la Syscall
 
 ```
-550 common cpu_usage_syscall cpu_usage_syscall
+┌─────────────────────────────────────────┐
+│  Usuario llama syscall(552, ...)        │
+└──────────────┬──────────────────────────┘
+               │
+        ┌──────▼───────┐
+        │ Copiar rutas │
+        │  del usuario │
+        │ al kernel    │
+        └──────┬───────┘
+               │
+     ┌─────────▼──────────┐
+     │ Abrir archivos:    │
+     │ • Entrada          │
+     │ • Salida           │
+     │ • Clave            │
+     └─────────┬──────────┘
+               │
+     ┌─────────▼─────────────┐
+     │ Leer clave a RAM      │
+     │ Leer entrada a RAM    │
+     └─────────┬─────────────┘
+               │
+     ┌─────────▼────────────────────┐
+     │ Dividir archivo en N           │
+     │ fragmentos (N = thread_count)  │
+     └─────────┬────────────────────┘
+               │
+     ┌─────────▼──────────────────┐
+     │ Crear N hilos del kernel   │
+     │ Cada uno procesa su parte  │
+     │ (operación XOR paralela)   │
+     └─────────┬──────────────────┘
+               │
+     ┌─────────▼──────────────────┐
+     │ Esperar a todos los hilos  │
+     │ (sincronización)           │
+     └─────────┬──────────────────┘
+               │
+     ┌─────────▼───────────────────┐
+     │ Escribir buffer encriptado  │
+     │ al archivo de salida        │
+     └─────────┬───────────────────┘
+               │
+     ┌─────────▼────────────────┐
+     │ Liberar memoria y        │
+     │ cerrar archivos          │
+     └─────────┬────────────────┘
+               │
+        ┌──────▼────────────┐
+        │ Retornar resultado│
+        │ al usuario        │
+        └───────────────────┘
 ```
 
 ---
 
-## Uso desde espacio de usuario
+## 🔧 Implementación del Kernel (`encrypt.c`)
 
-Ejemplo de `main.c` incluido en el repositorio (usa `SYS_CPU_USAGE = 550`):
+### Estructuras de datos
+
+**DataFragment**: Contiene la sección del archivo que cada hilo procesa.
 
 ```c
-#include <stdio.h>
-#include <unistd.h>
-#include <sys/syscall.h>
+typedef struct {
+    unsigned char *buffer;        // Puntero a los datos completos
+    size_t data_size;             // Tamaño total
+    unsigned char *encryption_key;// Clave de encriptación
+    size_t key_length;            // Largo de la clave
+    size_t start_idx;             // Inicio del fragmento para este hilo
+    size_t end_idx;               // Fin del fragmento para este hilo
+} DataFragment;
+```
 
-#define SYS_CPU_USAGE 550
+**task_params**: Coordina cada hilo individual.
 
-int main(void) {
-    int cpu_usage = 0;
-    long res = syscall(SYS_CPU_USAGE, &cpu_usage);
+```c
+struct task_params {
+    DataFragment data_fragment;
+    struct completion completed_event; // Señal de finalización
+};
+```
 
-    if (res == 0) {
-        printf("CPU Usage: %d.%02d%%\n", cpu_usage / 100, cpu_usage % 100);
-    } else {
-        perror("Error en syscall");
-        return 1;
+### Funciones principales
+
+#### 1. `perform_xor_operation()`
+
+Función ejecutada por cada hilo del kernel:
+
+```c
+int perform_xor_operation(void *arg) {
+    struct task_params *params = (struct task_params *)arg;
+    DataFragment *fragment = &params->data_fragment;
+
+    // Procesa solo la sección asignada a este hilo
+    for (i = fragment->start_idx; i < fragment->end_idx; i++) {
+        // XOR cada byte con un byte de la clave (ciclando si la clave es corta)
+        fragment->buffer[i] ^= fragment->encryption_key[i % fragment->key_length];
     }
 
+    // Avisa al hilo principal que terminó
+    complete(&params->completed_event);
     return 0;
 }
 ```
 
-### Compilar y ejecutar
+#### 2. `handle_file_encryption()`
+
+Función principal que orquesta el proceso:
+
+1. **Abrir archivos** usando `filp_open()` en el kernel
+2. **Leer clave** a memoria del kernel con `kernel_read()`
+3. **Leer archivo de entrada** a memoria del kernel
+4. **Dividir el archivo** en `thread_count` fragmentos
+5. **Crear hilos** con `kthread_run()` pasando la función `perform_xor_operation()`
+6. **Esperar sincronización** con `wait_for_completion()`
+7. **Escribir resultado** con `kernel_write()`
+8. **Liberar memoria** con `kfree()` y cerrar archivos
+
+#### 3. `SYSCALL_DEFINE4()`
+
+Define la interfaz de la syscall visible desde espacio de usuario:
+
+```c
+SYSCALL_DEFINE4(my_encrypt,
+    const char __user *, input_filepath,
+    const char __user *, output_filepath,
+    const char __user *, key_filepath,
+    int, thread_count)
+```
+
+- Copia las rutas del usuario al kernel de forma segura con `strndup_user()`
+- Llama a `handle_file_encryption()` con los datos del kernel
+- Libera memoria y retorna el resultado
+
+### Conceptos clave
+
+- **kmalloc / kfree**: Reservar/liberar memoria en el kernel
+- **kernel_read / kernel_write**: Leer/escribir archivos desde el kernel
+- **kthread_run**: Crear y ejecutar un hilo del kernel
+- **completion**: Mecanismo de sincronización para esperar hilos
+- **strndup_user**: Copiar cadenas de usuario a kernel de forma segura
+
+---
+
+## 💻 Uso desde espacio de usuario
+
+El programa `main.c` implementa un menú interactivo:
+
+```c
+#include <sys/syscall.h>
+
+#define MY_ENCRYPT 552
+
+long result = syscall(MY_ENCRYPT, input_path, output_path, key_path, num_threads);
+```
+
+### Parámetros
+
+| Parámetro         | Tipo   | Descripción                            |
+| ----------------- | ------ | -------------------------------------- |
+| `input_filepath`  | char\* | Ruta del archivo a encriptar           |
+| `output_filepath` | char\* | Ruta del archivo encriptado            |
+| `key_filepath`    | char\* | Ruta del archivo que contiene la clave |
+| `thread_count`    | int    | Número de hilos para paralelizar       |
+
+### Programa interactivo
+
+El programa `main.c` pide al usuario:
+
+```
+-p : Ruta del archivo de entrada
+-o : Ruta del archivo de salida
+-k : Archivo con la clave
+-j : Número de hilos
+run : Ejecutar la encriptación
+```
+
+### Compilación y ejecución
 
 ```bash
-gcc -o cpu_usage_example main.c
-./cpu_usage_example
+# Compilar
+gcc -o encrypt main.c
+
+# Ejecutar
+./encrypt
 ```
 
-### Salida esperada
+### Flujo de uso
 
 ```
-CPU Usage: 12.34%
+1. Encriptar
+2. Salir
+
+> 1
+Ingrese un parametro (-p, -o, -k, -j o run para ejecutar): -p
+Archivo de entrada: /home/user/documento.txt
+
+Ingrese un parametro (-p, -o, -k, -j o run para ejecutar): -o
+Archivo de salida: /home/user/documento.txt.encrypted
+
+Ingrese un parametro (-p, -o, -k, -j o run para ejecutar): -k
+Clave: /home/user/clave.key
+
+Ingrese un parametro (-p, -o, -k, -j o run para ejecutar): -j
+Número de hilos: 4
+
+Ingrese un parametro (-p, -o, -k, -j o run para ejecutar): run
+Archivo encriptado exitosamente
 ```
 
 ---
 
-## Pasos para compilar e instalar el kernel (resumen)
+## ⚙️ Configuración del Kernel
 
-1. **Verificar archivo fuente**: `linux-6.12.61/kernel/cpu_usage.c` debe estar presente y contener la implementación de `cpu_info`.
+### 1. Crear/verificar `encrypt.c`
 
-2. **Configurar Makefile** (si es necesario):
+Asegúrate de que existe `linux-6.12.61/kernel/encrypt.c` con la implementación completa.
 
-   ```bash
-   # En linux-6.12.61/kernel/Makefile, asegúrese de incluir:
-   obj-y += cpu_usage.o
-   ```
+### 2. Actualizar `kernel/Makefile`
 
-3. **Confirmar entrada en tabla de syscalls**:
+```makefile
+obj-y += encrypt.o
+```
 
-   ```
-   # En linux-6.12.61/arch/x86/entry/syscalls/syscall_64.tbl:
-   550 common cpu_usage_syscall cpu_usage_syscall
-   ```
+### 3. Actualizar `syscall_64.tbl`
 
-4. **Compilar el kernel** (desde directorio raíz del kernel):
+Agregar la entrada (número 552):
 
-   ```bash
-   fakeroot make -j#nucleos
-   ```
-
-   Reemplaza `#nucleos` por el número de hilos/cores disponibles en tu CPU.
-
-5. **Verificar compilación**:
-
-   ```bash
-   echo $?
-   # Debería mostrar "0" (sin errores)
-   ```
-
-6. **Instalar módulos e instalar el kernel**:
-
-   ```bash
-   sudo make modules_install
-   sudo make install
-   ```
-
-7. **Actualizar GRUB** (si es necesario):
-
-   ```bash
-   sudo update-grub
-   ```
-
-8. **Reiniciar** (si es necesario):
-   ```bash
-   sudo reboot
-   ```
+```
+552 common encryp_syscall encryp_syscall
+```
 
 ---
 
-## Notas y recomendaciones
+## 🏗️ Compilación e Instalación
 
-- El valor devuelto por la syscall está en centésimas de porcentaje: `value / 100` = porcentaje con 2 decimales.
-- La syscall **bloquea ~100 ms** para medir el uso; no usarla en contextos donde ese bloqueo sea crítico.
-- Si al ejecutar desde usuario se obtiene error `EFAULT` o `EINVAL`:
+### Paso 1: Compilar el kernel
 
-  - Verificar que el kernel con la syscall esté arrancado.
-  - Confirmar permisos de ejecución en el binario del programa de usuario.
-  - Asegurar que la dirección del puntero sea válida (no NULL).
+Desde el directorio raíz del kernel (`linux-6.12.61/`):
 
-    ## Pasos para compilar e instalar el kernel (resumen)
+```bash
+fakeroot make -j#nucleos
+```
 
-    1. Añadir/editar `linux-6.12.61/kernel/cpu_usage.c` (ya incluido en el repo).
-    2. Asegurar que `linux-6.12.61/kernel/Makefile` compile el nuevo archivo (si aplica, añadir `obj-y += cpu_usage.o`).
-    3. Confirmar la entrada en `arch/x86/entry/syscalls/syscall_64.tbl` (número `550`).
-    4. Compilar el kernel:
+Reemplaza `#nucleos` por el número de cores de tu CPU.
 
-    ```bash
-    fakeroot make -j#nucleos
-    ```
+### Paso 2: Verificar compilación
 
-    5. Instalar módulos e instalar el kernel:
+```bash
+echo $?
+# Debe mostrar "0" (sin errores)
+```
 
-    ```bash
-    sudo make modules_install
-    sudo make install
-    ```
+### Paso 3: Instalar módulos e kernel
 
-    6. Actualizar GRUB y reiniciar si es necesario:
+```bash
+sudo make modules_install
+sudo make install
+```
 
-    ```bash
-    sudo update-grub
-    sudo reboot
-    ```
+### Paso 4: Actualizar GRUB
 
-    ***
+```bash
+sudo update-grub
+```
 
-    ## Notas y recomendaciones
+### Paso 5: Reiniciar
 
-    - El valor devuelto por la syscall está en centésimas de porcentaje (`value / 100` = porcentaje con 2 decimales).
-    - La syscall bloquea ~100 ms para medir el uso; no usarla en contextos donde ese bloqueo sea crítico.
-    - Si al ejecutar el ejemplo desde usuario se obtiene `EFAULT` o error, verificar permisos y que el kernel correcto esté arrancado.
+```bash
+sudo reboot
+```
 
-    ```
+### Paso 6: Verificar kernel
 
-    ```
+```bash
+uname -r
+```
+
+Debe mostrar la versión compilada (ej: `6.12.61`).
+
+---
+
+## 🧪 Ejemplo práctico
+
+### Crear archivos de prueba
+
+```bash
+# Crear un archivo de prueba
+echo "Hola, este es un mensaje secreto!" > mensaje.txt
+
+# Crear un archivo de clave
+echo "mi_clave_super_secreta" > clave.key
+```
+
+### Encriptar
+
+```bash
+./encrypt
+# Seleccionar opción 1
+# Ingresar parámetros como se describe arriba
+```
+
+### Verificar
+
+```bash
+# Ver el archivo original
+cat mensaje.txt
+# Output: Hola, este es un mensaje secreto!
+
+# Ver el archivo encriptado (será binario/ilegible)
+cat mensaje.txt.encrypted
+# Output: [caracteres ilegibles]
+
+# Para desencriptar, ejecutar nuevamente con:
+# -p: mensaje.txt.encrypted
+# -o: mensaje.txt.decrypted
+# -k: clave.key
+# El archivo decrypted será idéntico al original
+```
+
+---
+
+## 📊 Paralelización de Hilos
+
+Si tu archivo tiene 1000 bytes y usas 4 hilos:
+
+| Hilo | Rango    | Bytes |
+| ---- | -------- | ----- |
+| 0    | 0-249    | 250   |
+| 1    | 250-499  | 250   |
+| 2    | 500-749  | 250   |
+| 3    | 750-1000 | 250   |
+
+Cada hilo aplica XOR a su rango de forma **independiente y paralela**, mejorando el rendimiento en sistemas multi-core.
+
+---
+
+## 🐛 Solución de problemas
+
+| Error                      | Causa                  | Solución                                  |
+| -------------------------- | ---------------------- | ----------------------------------------- |
+| "Archivo no encontrado"    | Ruta incorrecta        | Verificar que los archivos existan        |
+| "Error al obtener syscall" | Kernel no recompilado  | Verificar que el kernel nuevo esté activo |
+| "Permiso denegado"         | Permisos insuficientes | Usar `sudo` si es necesario               |
+| "Error de memoria"         | Archivo muy grande     | Usar más hilos o aumentar RAM             |
+
+---
+
+## 📝 Notas importantes
+
+- La encriptación XOR **es reversible**: aplicar XOR dos veces con la misma clave recupera el contenido original.
+- El uso de **múltiples hilos** mejora el rendimiento en archivos grandes en sistemas multi-core.
+- Los **hilos del kernel** son más eficientes que hilos en espacio de usuario para operaciones I/O intensivas.
+- La **clave se repite** si es más corta que el archivo (usando operador módulo `%`).
+- Este es un ejemplo **educativo**; para uso en producción, usar algoritmos criptográficos estándares (AES, RSA, etc.).
 
 ```
 
