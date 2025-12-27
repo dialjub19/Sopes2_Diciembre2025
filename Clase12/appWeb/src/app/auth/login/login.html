@@ -1,0 +1,29 @@
+<div class="w-100 h-100 d-flex justify-content-center align-items-center">
+  <form [formGroup]="form" (ngSubmit)="login()">
+    <div class="d-flex flex-row justify-content-center align-items-center">
+      <mat-card appearance="outlined" class="p-5">
+        <mat-form-field class="example-full-width">
+        <mat-label>username</mat-label>
+        <input matInput placeholder="sopes2" formControlName="username">
+      </mat-form-field>
+        <mat-form-field>
+        <mat-label>Enter your password</mat-label>
+        <input matInput formControlName="password" [type]="hide() ? 'password' : 'text'" />
+        <button
+          matIconButton
+          matSuffix
+          (click)="clickEvent($event)"
+          [attr.aria-label]="'Hide password'"
+          [attr.aria-pressed]="hide()"
+          
+        >
+          <mat-icon>{{hide() ? 'visibility_off' : 'visibility'}}</mat-icon>
+        </button>
+      </mat-form-field>
+      <div class="">
+        <button matButton="filled">Login</button>
+      </div>
+      </mat-card>
+    </div>
+  </form>
+</div>
